@@ -36,7 +36,7 @@ async function brevo(ruta, metodo, cuerpo, key) {
   try {
     const r = await fetch(BREVO_URL + ruta, { method: metodo || 'GET', headers: { 'api-key': key, 'accept': 'application/json', 'content-type': 'application/json' }, body: cuerpo ? JSON.stringify(cuerpo) : undefined, signal: ctrl.signal });
     const txt = await r.text(); let j = {}; try { j = JSON.parse(txt); } catch (e) { }
-    if (!r.ok) { const msg = j.message || txt || ('HTTP ' + r.status); const e = new Error(r.status === 401 ? 'Brevo rechazó la clave API. Revisa que la hayas copiado completa (empieza por xkeysib-).' : /sender/i.test(msg) ? 'Brevo no acepta ese remitente: el correo debe estar verificado en Brevo (Senders → Add a sender → confirmar el código).' : 'Brevo respondió: ' + msg); e.status = r.status; throw e; }
+    if (!r.ok) { const msg = j.message || txt || ('HTTP ' + r.status); const e = new Error(r.status === 401 ? 'Brevo rechazó la clave API. Revisa que la hayas copiado completa (empieza por xkeysib-).' : /not authorized/i.test(msg) ? 'La clave API no tiene permiso para enviar correos. En Brevo → SMTP y API → Claves API, genera una clave nueva con todos los permisos (o al menos “Correos transaccionales”).' : /sender/i.test(msg) ? 'Brevo no acepta ese remitente: el correo debe estar verificado en Brevo (Remitentes → Agregar remitente → confirmar el código).' : 'Brevo respondió: ' + msg); e.status = r.status; throw e; }
     return j;
   } catch (e) { if (e.name === 'AbortError') throw new Error('Brevo no respondió a tiempo.'); throw e; }
   finally { clearTimeout(t); }
@@ -46,8 +46,11 @@ async function configurarCorreo() {
   if (!d) { estadoCanales.correo = { ok: false, detalle: 'Sin cuenta de correo. Pulsa “Configurar correo” para conectarlo.', configurable: true }; return estadoCanales.correo; }
   const configurable = d.origen !== 'variables del servidor';
   if (d.tipo === 'brevo') {
-    try { const cuenta = await brevo('/account', 'GET', null, d.apiKey); brevoKey = d.apiKey; remitente = d.from; estadoCanales.correo = { ok: true, detalle: 'Enviando desde ' + remitente + ' por Brevo (' + (cuenta.email || 'cuenta conectada') + ').', configurable, cuenta: d.from, tipo: 'brevo' }; }
-    catch (e) { estadoCanales.correo = { ok: false, detalle: 'Brevo: ' + (e.message || e), configurable, cuenta: d.from, tipo: 'brevo' }; }
+    if (!/^xkeysib-/.test(d.apiKey)) { estadoCanales.correo = { ok: false, detalle: 'La clave API de Brevo debe empezar por xkeysib-. Revisa que la hayas copiado completa.', configurable, cuenta: d.from, tipo: 'brevo' }; return estadoCanales.correo; }
+    let detalle = 'Enviando desde ' + d.from + ' por Brevo.';
+    try { const cuenta = await brevo('/account', 'GET', null, d.apiKey); if (cuenta && cuenta.email) detalle = 'Enviando desde ' + d.from + ' por Brevo (cuenta ' + cuenta.email + ').'; }
+    catch (e) { if (e.status === 401) { estadoCanales.correo = { ok: false, detalle: 'Brevo: ' + e.message, configurable, cuenta: d.from, tipo: 'brevo' }; return estadoCanales.correo; } }
+    brevoKey = d.apiKey; remitente = d.from; estadoCanales.correo = { ok: true, detalle, configurable, cuenta: d.from, tipo: 'brevo' };
     return estadoCanales.correo;
   }
   const puerto = Number(d.port || 587);
