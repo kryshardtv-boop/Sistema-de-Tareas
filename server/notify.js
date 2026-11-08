@@ -135,17 +135,50 @@ async function procesarEnvios() {
     }
   } finally { procesando = false; }
 }
+function colorEmpresa(id) { const e = q.get('SELECT color FROM empresas WHERE id = ?', id); return e ? e.color : '#4f46e5'; }
+function plantillaCorreo({ titulo, cuerpo, item, url, boton, color, nombrePersona }) {
+  const c = color || '#4f46e5';
+  const fila = (icono, texto) => '<tr><td style="padding:6px 10px 6px 0;font-size:18px;vertical-align:top;width:28px">' + icono + '</td><td style="padding:6px 0;font-size:15px;line-height:1.5;color:#1b2030;vertical-align:top">' + texto + '</td></tr>';
+  let detalles = '';
+  if (item) {
+    const f = fin(item); const personas = item.personas.filter(x => x !== item.dueño).map(nombreDe);
+    const [et] = (() => { if (item.estado === 'cancelada') return ['Cancelada']; if (item.estado === 'hecha') return ['Realizada']; if (item.estado === 'movida') return ['Nueva fecha, por confirmar']; const pend = item.personas.filter(px => item.confirm[px] !== 'ok').length; return [pend ? 'Por confirmar' : 'Confirmada']; })();
+    detalles = '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:18px 0 6px;background:#f6f7fb;border-radius:12px;border-left:5px solid ' + c + '"><tr><td style="padding:14px 16px">' +
+      '<div style="font-size:12px;font-weight:bold;color:#5f6880;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">' + esc(empresaNombre(item.empresa)) + (item.proyecto ? ' · ' + esc(item.proyecto) : '') + '</div>' +
+      '<div style="font-size:19px;font-weight:bold;color:#1b2030;margin-bottom:8px">' + esc(item.nombre) + '</div>' +
+      '<table role="presentation" cellpadding="0" cellspacing="0">' +
+      fila('📅', '<b>' + cap(fLarga(item.inicio)) + '</b><br>' + fHora(item.inicio) + ' a ' + fHora(f) + ' · hora de Colombia') +
+      (item.lugar ? fila(item.enlace ? '💻' : '📍', esc(item.lugar) + (item.enlace ? '<br><a href="' + esc(item.enlace) + '" style="color:' + c + '">Abrir enlace de reunión</a>' : '')) : '') +
+      fila('👤', 'Responsable: <b>' + esc(nombreDe(item.dueño)) + '</b>') +
+      (personas.length ? fila('👥', esc(personas.join(', '))) : '') +
+      (item.nota ? fila('📝', esc(item.nota)) : '') +
+      fila('🏷️', '<span style="display:inline-block;background:#e9e8fb;color:#4f46e5;font-weight:bold;font-size:13px;padding:3px 10px;border-radius:8px">' + et + '</span>') +
+      '</table></td></tr></table>';
+  }
+  const cuerpoHtml = esc(cuerpo).replace(/\n/g, '<br>');
+  return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>' + esc(titulo) + '</title></head>' +
+    '<body style="margin:0;padding:0;background:#eef0f5;font-family:Arial,Helvetica,sans-serif">' +
+    '<div style="display:none;max-height:0;overflow:hidden;color:#eef0f5">' + esc(cuerpo.slice(0, 110)) + '</div>' +
+    '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#eef0f5"><tr><td align="center" style="padding:28px 12px">' +
+    '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:580px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 18px rgba(27,32,48,.08)">' +
+    '<tr><td style="padding:18px 24px;background:#ffffff;border-bottom:1px solid #e6e8f0"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="width:40px;height:40px;background:#4f46e5;border-radius:11px;color:#ffffff;font-weight:bold;font-size:16px;text-align:center;vertical-align:middle">AG</td><td style="padding-left:12px;font-size:16px;font-weight:bold;color:#1b2030">Agenda del Grupo<div style="font-size:12px;font-weight:normal;color:#5f6880">Agenda, avisos y tareas del equipo</div></td></tr></table></td></tr>' +
+    '<tr><td style="height:5px;background:' + c + '"></td></tr>' +
+    '<tr><td style="padding:26px 24px 8px">' + (nombrePersona ? '<div style="font-size:15px;color:#5f6880;margin-bottom:6px">Hola, ' + esc(nombrePersona) + '</div>' : '') + '<h1 style="margin:0 0 12px;font-size:22px;line-height:1.25;color:#1b2030">' + esc(titulo) + '</h1><p style="margin:0;font-size:16px;line-height:1.55;color:#2b3142">' + cuerpoHtml + '</p>' + detalles + '</td></tr>' +
+    (url ? '<tr><td style="padding:14px 24px 26px"><a href="' + esc(url) + '" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:bold;font-size:16px;padding:14px 26px;border-radius:12px">' + esc(boton || 'Abrir la agenda') + '</a><div style="font-size:12px;color:#5f6880;margin-top:10px">Si el botón no abre, copia este enlace: <a href="' + esc(url) + '" style="color:#4f46e5;word-break:break-all">' + esc(url) + '</a></div></td></tr>' : '') +
+    '<tr><td style="padding:16px 24px;background:#f6f7fb;font-size:12px;line-height:1.5;color:#5f6880;border-top:1px solid #e6e8f0">Recibes este correo porque haces parte del equipo en Agenda del Grupo. Puedes cambiar cómo te avisamos en <b>Ajustes de avisos</b> dentro de la plataforma.</td></tr>' +
+    '</table></td></tr></table></body></html>';
+}
 async function enviarCorreo(p, aviso) {
   if (!transporte && !brevoKey) throw new Error('Correo sin configurar');
-  const url = appUrl() + (aviso.item_id ? '/?item=' + encodeURIComponent(aviso.item_id) : '/');
-  const html = `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1b2030">
-    <div style="font-size:13px;color:#5f6880;margin-bottom:8px">Agenda del Grupo</div>
-    <h2 style="margin:0 0 12px;font-size:20px">${esc(aviso.titulo)}</h2>
-    <p style="font-size:16px;line-height:1.5">${esc(aviso.cuerpo)}</p>
-    <p style="margin:24px 0"><a href="${url}" style="background:#4f46e5;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:bold;display:inline-block">${aviso.item_id ? 'Abrir actividad' : 'Abrir la agenda'}</a></p>
-    <p style="font-size:12px;color:#5f6880">Puedes cambiar cómo te avisamos en Ajustes de avisos dentro de la plataforma.</p></div>`;
-  if (brevoKey) { await brevo('/smtp/email', 'POST', { sender: { name: 'Agenda del Grupo', email: remitente }, to: [{ email: p.correo }], subject: aviso.titulo + ' · Agenda del Grupo', htmlContent: html, textContent: aviso.cuerpo + '\n\n' + url }, brevoKey); return; }
-  await transporte.sendMail({ from: '"Agenda del Grupo" <' + remitente + '>', to: p.correo, subject: aviso.titulo + ' · Agenda del Grupo', text: aviso.cuerpo + '\n\n' + url, html });
+  const item = aviso.item_id ? getItem(aviso.item_id) : null;
+  const url = aviso.url || (appUrl() + (aviso.item_id ? '/?item=' + encodeURIComponent(aviso.item_id) : '/'));
+  const esConfirmacion = item && p.id && item.personas.includes(p.id) && item.dueño !== p.id && item.confirm && item.confirm[p.id] !== 'ok' && activo(item) && !ES_TAREA(item.tipo);
+  const boton = aviso.boton || (esConfirmacion ? 'Confirmar asistencia' : (item ? 'Abrir actividad' : 'Abrir la agenda'));
+  const html = plantillaCorreo({ titulo: aviso.titulo, cuerpo: aviso.cuerpo, item, url, boton, color: item ? colorEmpresa(item.empresa) : null, nombrePersona: p.nombre || '' });
+  const texto = aviso.cuerpo + (item ? '\n\n' + item.nombre + ' · ' + empresaNombre(item.empresa) + '\n' + cap(fLarga(item.inicio)) + ' · ' + fHora(item.inicio) + ' a ' + fHora(fin(item)) + (item.lugar ? '\n' + item.lugar : '') + '\nResponsable: ' + nombreDe(item.dueño) : '') + '\n\n' + boton + ': ' + url;
+  const asunto = aviso.titulo + (item ? ' · ' + item.nombre : '') + ' · Agenda del Grupo';
+  if (brevoKey) { await brevo('/smtp/email', 'POST', { sender: { name: 'Agenda del Grupo', email: remitente }, to: [{ email: p.correo, name: p.nombre || undefined }], subject: asunto, htmlContent: html, textContent: texto }, brevoKey); return; }
+  await transporte.sendMail({ from: '"Agenda del Grupo" <' + remitente + '>', to: p.correo, subject: asunto, text: texto, html });
 }
 async function enviarPush(p, aviso, cuerpoCorto) {
   const subs = q.all('SELECT * FROM suscripciones WHERE persona = ?', p.id);
