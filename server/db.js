@@ -63,6 +63,9 @@ CREATE TABLE IF NOT EXISTS config (clave TEXT PRIMARY KEY, valor TEXT);
 CREATE TABLE IF NOT EXISTS marcas (clave TEXT PRIMARY KEY, fecha TEXT NOT NULL);
 `);
 
+// ---- Migraciones ----
+if (!db.prepare("SELECT 1 FROM pragma_table_info('items') WHERE name = 'empresas'").get()) db.exec('ALTER TABLE items ADD COLUMN empresas TEXT');
+
 // ---- Datos base (solo la primera vez) ----
 const ALL = ['bross', 'rojas', 'chupe', 'montecarlo', 'qkis'];
 const EMPRESAS_BASE = [
@@ -111,7 +114,7 @@ function filaPersona(r) {
 function filaItem(r) {
   if (!r) return null;
   return {
-    id: r.id, tipo: r.tipo, nombre: r.nombre, frase: r.frase || '', empresa: r.empresa, proyecto: r.proyecto || '', inicio: r.inicio, duracion: r.duracion,
+    id: r.id, tipo: r.tipo, nombre: r.nombre, frase: r.frase || '', empresa: r.empresa, empresas: (J(r.empresas) || [r.empresa]).filter(Boolean), proyecto: r.proyecto || '', inicio: r.inicio, duracion: r.duracion,
     dueño: r.dueno, personas: J(r.personas) || [], lugar: r.lugar || '', enlace: r.enlace || '', nota: r.nota || '', estado: r.estado,
     confirm: J(r.confirm) || {}, solicitudes: J(r.solicitudes) || [], offsets: r.offsets ? J(r.offsets) : null, bloqueo: r.bloqueo || '', revisor: r.revisor || '',
     plataforma: r.plataforma || '', links: r.links || 0, comentariosResp: r.comentarios_resp || 0, enlacePub: r.enlace_pub || '',
@@ -125,6 +128,7 @@ function guardarItem(it) {
     it.id, it.tipo, it.nombre, it.frase || '', it.empresa, it.proyecto || '', it.inicio, it.duracion, it.dueño, JSON.stringify(it.personas), it.lugar || '', it.enlace || '', it.nota || '', it.estado,
     JSON.stringify(it.confirm || {}), JSON.stringify(it.solicitudes || []), it.offsets ? JSON.stringify(it.offsets) : null, it.bloqueo || null, it.revisor || null,
     it.plataforma || '', it.links || 0, it.comentariosResp || 0, it.enlacePub || '', JSON.stringify(it.archivos || []), JSON.stringify(it.historial || []), it.creada, it.creadoPor || null);
+  q.run('UPDATE items SET empresas = ? WHERE id = ?', JSON.stringify(it.empresas && it.empresas.length ? it.empresas : [it.empresa]), it.id);
 }
 function getItem(id) { return filaItem(q.get('SELECT * FROM items WHERE id = ?', id)); }
 function getPersona(id) { return filaPersona(q.get('SELECT * FROM personas WHERE id = ?', id)); }

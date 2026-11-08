@@ -21,8 +21,11 @@ const TIPOS = ['Grabación', 'Reunión', 'Entrevista', 'Podcast', 'Evento', 'Pub
 const ROLES = ['Colaborador', 'Coordinador', 'Líder', 'Administrador'];
 const esAdmin = yo => yo.rol === 'Administrador';
 const esLider = yo => yo.rol === 'Líder';
-const puedeEditar = (yo, it) => esAdmin(yo) || it.dueño === yo.id || (esLider(yo) && yo.empresas.includes(it.empresa));
-const veDetalles = (yo, it) => it.personas.includes(yo.id) || esAdmin(yo) || (esLider(yo) && yo.empresas.includes(it.empresa));
+const empresasDe = it => (it.empresas && it.empresas.length ? it.empresas : [it.empresa]);
+const lideraAlguna = (yo, it) => empresasDe(it).some(e => yo.empresas.includes(e));
+const puedeEditar = (yo, it) => esAdmin(yo) || it.dueño === yo.id || (esLider(yo) && lideraAlguna(yo, it));
+const veDetalles = (yo, it) => it.personas.includes(yo.id) || esAdmin(yo) || (esLider(yo) && lideraAlguna(yo, it));
+const responsablesItem = it => [...new Set(empresasDe(it).flatMap(e => N.responsablesDe(e)))];
 const hist = (it, texto) => { it.historial.push({ fecha: ahoraISO(), texto }); };
 const slug = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 const fechaCorta = d => N.cap(N.fCorta(d)) + ' ' + N.fHora(d);
@@ -122,11 +125,16 @@ function leerCuerpoItem(b, yo) {
   const inicio = new Date(b.inicio); if (isNaN(inicio)) throw new Error('La fecha no es válida.');
   const nombre = String(b.nombre || '').trim(); if (!nombre) throw new Error('Falta el nombre de la actividad.');
   const tipo = TIPOS.includes(b.tipo) ? b.tipo : 'Reunión';
-  if (!q.get('SELECT id FROM empresas WHERE id = ?', b.empresa)) throw new Error('Elige una empresa.');
+  const todas = q.all('SELECT id FROM empresas').map(e => e.id); const permitidas = yo.rol === 'Administrador' ? todas : todas.filter(e => yo.empresas.includes(e));
+  let empresas = (Array.isArray(b.empresas) ? b.empresas : [b.empresa]).filter(e => todas.includes(e));
+  empresas = [...new Set(empresas)];
+  if (!empresas.length) throw new Error('Elige al menos una empresa.');
+  const noPermitidas = empresas.filter(e => !permitidas.includes(e));
+  if (noPermitidas.length) throw new Error('Solo puedes agendar en las empresas donde estás. Pídele al administrador que te agregue a ' + noPermitidas.map(e => (q.get('SELECT nombre FROM empresas WHERE id = ?', e) || {}).nombre || e).join(', ') + '.');
   const activos = personasActivas().map(p => p.id);
   const dueño = activos.includes(b.dueño) ? b.dueño : yo.id;
   let personas = Array.isArray(b.personas) ? b.personas.filter(p => activos.includes(p)) : []; if (!personas.includes(dueño)) personas.unshift(dueño);
-  return { nombre, tipo, empresa: b.empresa, proyecto: String(b.proyecto || '').trim().slice(0, 80), inicio: inicio.toISOString(), duracion: Math.min(720, Math.max(15, Number(b.duracion) || 60)), dueño, personas, lugar: String(b.lugar || '').trim().slice(0, 160), nota: String(b.nota || '').trim().slice(0, 2000), enlace: String(b.enlace || '').trim().slice(0, 300), plataforma: String(b.plataforma || '').slice(0, 40), links: Math.max(0, Number(b.links) || 0), comentariosResp: Math.max(0, Number(b.comentariosResp) || 0), enlacePub: String(b.enlacePub || '').trim().slice(0, 300) };
+  return { nombre, tipo, empresa: empresas[0], empresas, proyecto: String(b.proyecto || '').trim().slice(0, 80), inicio: inicio.toISOString(), duracion: Math.min(720, Math.max(15, Number(b.duracion) || 60)), dueño, personas, lugar: String(b.lugar || '').trim().slice(0, 160), nota: String(b.nota || '').trim().slice(0, 2000), enlace: String(b.enlace || '').trim().slice(0, 300), plataforma: String(b.plataforma || '').slice(0, 40), links: Math.max(0, Number(b.links) || 0), comentariosResp: Math.max(0, Number(b.comentariosResp) || 0), enlacePub: String(b.enlacePub || '').trim().slice(0, 300) };
 }
 app.post('/api/items', (req, res) => {
   let d; try { d = leerCuerpoItem(req.body, req.yo); } catch (e) { return err(res, 400, e.message); }
@@ -136,7 +144,7 @@ app.post('/api/items', (req, res) => {
   if (req.body.hechaNow) { it.estado = 'hecha'; hist(it, 'Registrada como hecha.'); }
   guardarItem(it);
   if (it.estado !== 'hecha') {
-    it.personas.filter(p => p !== req.yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Te agregaron a una actividad', cuerpo: it.nombre + ' · ' + N.empresaNombre(it.empresa) + ' · ' + N.cuandoTexto(it.inicio) + ' ' + N.fHora(it.inicio) + (it.lugar ? ' · ' + it.lugar : '') + '. Responsable: ' + N.nombreDe(it.dueño) + '.' + (N.ES_TAREA(it.tipo) ? '' : ' Confirma tu asistencia.'), itemId: it.id, pushCuerpo: 'Nueva · ' + it.tipo + ' · ' + N.empresaNombre(it.empresa) + ' · ' + N.fHora(it.inicio) }));
+    it.personas.filter(p => p !== req.yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Te agregaron a una actividad', cuerpo: it.nombre + ' · ' + N.nombresEmpresas(it) + ' · ' + N.cuandoTexto(it.inicio) + ' ' + N.fHora(it.inicio) + (it.lugar ? ' · ' + it.lugar : '') + '. Responsable: ' + N.nombreDe(it.dueño) + '.' + (N.ES_TAREA(it.tipo) ? '' : ' Confirma tu asistencia.'), itemId: it.id, pushCuerpo: 'Nueva · ' + it.tipo + ' · ' + N.nombresEmpresas(it) + ' · ' + N.fHora(it.inicio) }));
     N.programarRecordatorios(it);
   }
   res.json({ ok: true, id: it.id });
@@ -156,10 +164,10 @@ app.put('/api/items/:id', (req, res) => {
     if (it.estado !== 'pendiente') it.estado = 'movida';
     it.personas.forEach(p => it.confirm[p] = p === it.dueño ? 'ok' : 'pend'); it.solicitudes = [];
     hist(it, 'Movida por ' + req.yo.nombre + ': de ' + antes + ' a ' + fechaCorta(it.inicio) + '. Se cancelaron ' + n + ' recordatorios, se programaron ' + n + ' nuevos y se pidió confirmar de nuevo.');
-    it.personas.filter(p => p !== req.yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Cambió la fecha de una actividad', cuerpo: it.nombre + ' ahora es ' + N.cuandoTexto(it.inicio) + ' ' + N.fHora(it.inicio) + ' (' + N.empresaNombre(it.empresa) + '). Confirma de nuevo tu asistencia.', itemId: it.id, pushCuerpo: 'Nueva fecha · ' + it.tipo + ' · ' + N.fHora(it.inicio) }));
+    it.personas.filter(p => p !== req.yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Cambió la fecha de una actividad', cuerpo: it.nombre + ' ahora es ' + N.cuandoTexto(it.inicio) + ' ' + N.fHora(it.inicio) + ' (' + N.nombresEmpresas(it) + '). Confirma de nuevo tu asistencia.', itemId: it.id, pushCuerpo: 'Nueva fecha · ' + it.tipo + ' · ' + N.fHora(it.inicio) }));
   } else if (cambioHora) hist(it, 'Fecha cambiada por ' + req.yo.nombre + ': de ' + antes + ' a ' + fechaCorta(it.inicio) + '. Recordatorios reprogramados.');
   else hist(it, 'Datos actualizados por ' + req.yo.nombre + '.');
-  nuevos.filter(p => p !== req.yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Te agregaron a una actividad', cuerpo: it.nombre + ' · ' + N.empresaNombre(it.empresa) + ' · ' + N.cuandoTexto(it.inicio) + ' ' + N.fHora(it.inicio) + '.', itemId: it.id, pushCuerpo: 'Nueva · ' + it.tipo + ' · ' + N.fHora(it.inicio) }));
+  nuevos.filter(p => p !== req.yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Te agregaron a una actividad', cuerpo: it.nombre + ' · ' + N.nombresEmpresas(it) + ' · ' + N.cuandoTexto(it.inicio) + ' ' + N.fHora(it.inicio) + '.', itemId: it.id, pushCuerpo: 'Nueva · ' + it.tipo + ' · ' + N.fHora(it.inicio) }));
   guardarItem(it); N.programarRecordatorios(it);
   res.json({ ok: true, movida: cambioHora });
 });
@@ -183,9 +191,9 @@ app.post('/api/items/:id/accion', (req, res) => {
       if (it.revisor && it.revisor !== yo.id) N.crearAviso({ para: it.revisor, titulo: yo.nombre + ' terminó una tarea', cuerpo: it.nombre, itemId: it.id }); break;
     case 'cancelar': if (!puedeEditar(yo, it)) return err(res, 403, 'No puedes cancelar esta actividad. Pídeselo a ' + N.nombreDe(it.dueño) + '.');
       { const n = q.get('SELECT COUNT(*) AS n FROM recordatorios WHERE item_id = ? AND enviado = 0', it.id).n; it.estado = 'cancelada'; hist(it, 'Cancelada por ' + yo.nombre + (motivo ? ' (“' + motivo + '”)' : '') + '. Se avisó a ' + (it.personas.length - 1) + ' participantes y se detuvieron ' + n + ' recordatorios.'); N.detenerRecordatorios(it.id);
-        it.personas.filter(p => p !== yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Actividad cancelada', cuerpo: it.nombre + ' · ' + N.empresaNombre(it.empresa) + ' · ' + N.cuandoTexto(it.inicio) + ' ' + N.fHora(it.inicio) + (motivo ? '. Motivo: ' + motivo : ''), itemId: it.id, pushCuerpo: 'Cancelada · ' + it.tipo + ' · ' + N.fHora(it.inicio) })); } break;
+        it.personas.filter(p => p !== yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Actividad cancelada', cuerpo: it.nombre + ' · ' + N.nombresEmpresas(it) + ' · ' + N.cuandoTexto(it.inicio) + ' ' + N.fHora(it.inicio) + (motivo ? '. Motivo: ' + motivo : ''), itemId: it.id, pushCuerpo: 'Cancelada · ' + it.tipo + ' · ' + N.fHora(it.inicio) })); } break;
     case 'entregar': if (it.dueño !== yo.id) return err(res, 403, 'Solo el responsable puede entregarla.');
-      { it.estado = 'en_revision'; const rev = it.revisor || N.responsablesDe(it.empresa).find(x => x !== yo.id) || ''; it.revisor = rev; q.run('INSERT INTO comentarios (item_id, de, texto, fecha) VALUES (?, ?, ?, ?)', it.id, yo.id, 'Entregado para revisión.', ahoraISO()); hist(it, 'Entregada para revisión.');
+      { it.estado = 'en_revision'; const rev = it.revisor || responsablesItem(it).find(x => x !== yo.id) || ''; it.revisor = rev; q.run('INSERT INTO comentarios (item_id, de, texto, fecha) VALUES (?, ?, ?, ?)', it.id, yo.id, 'Entregado para revisión.', ahoraISO()); hist(it, 'Entregada para revisión.');
         if (rev) N.crearAviso({ para: rev, titulo: 'Entrega para revisión', cuerpo: yo.nombre + ' entregó “' + it.nombre + '”. Revisa y aprueba o pide ajustes.', itemId: it.id, pushCuerpo: 'Para revisar · ' + yo.nombre }); } break;
     case 'aprobar': if (!(it.revisor === yo.id || esAdmin(yo) || esLider(yo))) return err(res, 403, 'No puedes aprobar esta entrega.');
       it.estado = 'hecha'; q.run('INSERT INTO comentarios (item_id, de, texto, fecha) VALUES (?, ?, ?, ?)', it.id, yo.id, 'Aprobada.', ahoraISO()); hist(it, 'Aprobada por ' + yo.nombre + '.'); N.detenerRecordatorios(it.id);
@@ -195,7 +203,7 @@ app.post('/api/items/:id/accion', (req, res) => {
       N.crearAviso({ para: it.dueño, titulo: 'Te pidieron ajustes', cuerpo: '“' + it.nombre + '”: ' + (motivo || 'Revisar y ajustar'), itemId: it.id, pushCuerpo: 'Ajustes · ' + it.nombre }); break;
     case 'bloquear': if (it.dueño !== yo.id && !puedeEditar(yo, it)) return err(res, 403, 'Solo el responsable puede reportar el bloqueo.');
       it.estado = 'bloqueada'; it.bloqueo = motivo || 'Sin detalle'; hist(it, 'Bloqueada: ' + it.bloqueo);
-      N.responsablesDe(it.empresa).filter(x => x !== yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Tarea bloqueada', cuerpo: '“' + it.nombre + '” de ' + yo.nombre + ': ' + it.bloqueo, itemId: it.id })); break;
+      responsablesItem(it).filter(x => x !== yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Tarea bloqueada', cuerpo: '“' + it.nombre + '” de ' + yo.nombre + ': ' + it.bloqueo, itemId: it.id })); break;
     case 'desbloquear': if (it.dueño !== yo.id && !puedeEditar(yo, it)) return err(res, 403, 'No puedes cambiar esta tarea.');
       it.estado = 'pendiente'; it.bloqueo = ''; hist(it, 'Desbloqueada por ' + yo.nombre + '.'); break;
     case 'comentar': if (!veDetalles(yo, it)) return err(res, 403, 'No tienes acceso a los comentarios de esta actividad.');
@@ -313,7 +321,7 @@ app.post('/api/empresas', auth.requiereAdmin, (req, res) => {
 });
 app.delete('/api/empresas/:id', auth.requiereAdmin, (req, res) => {
   const id = req.params.id; if (!q.get('SELECT id FROM empresas WHERE id = ?', id)) return err(res, 404, 'La empresa no existe.');
-  const n = q.get('SELECT COUNT(*) AS n FROM items WHERE empresa = ?', id).n; if (n) return err(res, 400, 'No se puede eliminar: tiene ' + n + ' actividad' + (n === 1 ? '' : 'es') + ' registrada' + (n === 1 ? '' : 's') + '. Puedes cambiarle el nombre o el color.');
+  const n = q.all('SELECT empresa, empresas FROM items').filter(r => r.empresa === id || (J(r.empresas) || []).includes(id)).length; if (n) return err(res, 400, 'No se puede eliminar: tiene ' + n + ' actividad' + (n === 1 ? '' : 'es') + ' registrada' + (n === 1 ? '' : 's') + '. Puedes cambiarle el nombre o el color.');
   if (q.get('SELECT COUNT(*) AS n FROM empresas').n <= 1) return err(res, 400, 'Debe quedar al menos una empresa.');
   q.run('DELETE FROM empresas WHERE id = ?', id);
   q.all('SELECT id, empresas FROM personas').forEach(p => { const e = (J(p.empresas) || []).filter(x => x !== id); q.run('UPDATE personas SET empresas = ? WHERE id = ?', JSON.stringify(e), p.id); });

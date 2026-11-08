@@ -144,7 +144,7 @@ function plantillaCorreo({ titulo, cuerpo, item, url, boton, color, nombrePerson
     const f = fin(item); const personas = item.personas.filter(x => x !== item.dueño).map(nombreDe);
     const [et] = (() => { if (item.estado === 'cancelada') return ['Cancelada']; if (item.estado === 'hecha') return ['Realizada']; if (item.estado === 'movida') return ['Nueva fecha, por confirmar']; const pend = item.personas.filter(px => item.confirm[px] !== 'ok').length; return [pend ? 'Por confirmar' : 'Confirmada']; })();
     detalles = '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:18px 0 6px;background:#f6f7fb;border-radius:12px;border-left:5px solid ' + c + '"><tr><td style="padding:14px 16px">' +
-      '<div style="font-size:12px;font-weight:bold;color:#5f6880;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">' + esc(empresaNombre(item.empresa)) + (item.proyecto ? ' · ' + esc(item.proyecto) : '') + '</div>' +
+      '<div style="font-size:12px;font-weight:bold;color:#5f6880;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">' + esc(nombresEmpresas(item)) + (item.proyecto ? ' · ' + esc(item.proyecto) : '') + '</div>' +
       '<div style="font-size:19px;font-weight:bold;color:#1b2030;margin-bottom:8px">' + esc(item.nombre) + '</div>' +
       '<table role="presentation" cellpadding="0" cellspacing="0">' +
       fila('📅', '<b>' + cap(fLarga(item.inicio)) + '</b><br>' + fHora(item.inicio) + ' a ' + fHora(f) + ' · hora de Colombia') +
@@ -175,7 +175,7 @@ async function enviarCorreo(p, aviso) {
   const esConfirmacion = item && p.id && item.personas.includes(p.id) && item.dueño !== p.id && item.confirm && item.confirm[p.id] !== 'ok' && activo(item) && !ES_TAREA(item.tipo);
   const boton = aviso.boton || (esConfirmacion ? 'Confirmar asistencia' : (item ? 'Abrir actividad' : 'Abrir la agenda'));
   const html = plantillaCorreo({ titulo: aviso.titulo, cuerpo: aviso.cuerpo, item, url, boton, color: item ? colorEmpresa(item.empresa) : null, nombrePersona: p.nombre || '' });
-  const texto = aviso.cuerpo + (item ? '\n\n' + item.nombre + ' · ' + empresaNombre(item.empresa) + '\n' + cap(fLarga(item.inicio)) + ' · ' + fHora(item.inicio) + ' a ' + fHora(fin(item)) + (item.lugar ? '\n' + item.lugar : '') + '\nResponsable: ' + nombreDe(item.dueño) : '') + '\n\n' + boton + ': ' + url;
+  const texto = aviso.cuerpo + (item ? '\n\n' + item.nombre + ' · ' + nombresEmpresas(item) + '\n' + cap(fLarga(item.inicio)) + ' · ' + fHora(item.inicio) + ' a ' + fHora(fin(item)) + (item.lugar ? '\n' + item.lugar : '') + '\nResponsable: ' + nombreDe(item.dueño) : '') + '\n\n' + boton + ': ' + url;
   const asunto = aviso.titulo + (item ? ' · ' + item.nombre : '') + ' · Agenda del Grupo';
   if (brevoKey) { await brevo('/smtp/email', 'POST', { sender: { name: 'Agenda del Grupo', email: remitente }, to: [{ email: p.correo, name: p.nombre || undefined }], subject: asunto, htmlContent: html, textContent: texto }, brevoKey); return; }
   await transporte.sendMail({ from: '"Agenda del Grupo" <' + remitente + '>', to: p.correo, subject: asunto, text: texto, html });
@@ -200,13 +200,14 @@ const activo = it => !['cancelada', 'hecha'].includes(it.estado);
 function fin(it) { return new Date(new Date(it.inicio).getTime() + it.duracion * 60000); }
 function nombreDe(id) { const p = getPersona(id); return p ? p.nombre : id; }
 function empresaNombre(id) { const e = q.get('SELECT nombre FROM empresas WHERE id = ?', id); return e ? e.nombre : id; }
+function nombresEmpresas(it) { const ids = (it.empresas && it.empresas.length ? it.empresas : [it.empresa]); return ids.map(empresaNombre).join(' · '); }
 
 function textoAviso(it, personaId) {
   const dest = it.enlace ? 'Enlace: ' + it.enlace : (it.lugar ? 'Lugar: ' + it.lugar : '');
-  return nombreDe(personaId) + ', ' + cuandoTexto(it.inicio) + ' tienes ' + (it.frase || ('“' + it.nombre + '”')) + ' de ' + empresaNombre(it.empresa) + ' a las ' + fHora(it.inicio) + ' (hora de Colombia). ' + (dest ? dest + '. ' : '') + 'Responsable: ' + nombreDe(it.dueño) + '. ' + (it.nota ? it.nota.split('.')[0] + ' y confirma tu asistencia.' : 'Confirma tu asistencia.');
+  return nombreDe(personaId) + ', ' + cuandoTexto(it.inicio) + ' tienes ' + (it.frase || ('“' + it.nombre + '”')) + ' de ' + nombresEmpresas(it) + ' a las ' + fHora(it.inicio) + ' (hora de Colombia). ' + (dest ? dest + '. ' : '') + 'Responsable: ' + nombreDe(it.dueño) + '. ' + (it.nota ? it.nota.split('.')[0] + ' y confirma tu asistencia.' : 'Confirma tu asistencia.');
 }
 function textoTarea(it, etiqueta) {
-  return (etiqueta === 'vence' ? '“' + it.nombre + '” (' + empresaNombre(it.empresa) + ') venció ' + cuandoTexto(fin(it)) + ' a las ' + fHora(fin(it)) + ' y sigue sin completarse.' : '“' + it.nombre + '” (' + empresaNombre(it.empresa) + ') se entrega ' + cuandoTexto(fin(it)) + ' a las ' + fHora(fin(it)) + '.');
+  return (etiqueta === 'vence' ? '“' + it.nombre + '” (' + nombresEmpresas(it) + ') venció ' + cuandoTexto(fin(it)) + ' a las ' + fHora(fin(it)) + ' y sigue sin completarse.' : '“' + it.nombre + '” (' + nombresEmpresas(it) + ') se entrega ' + cuandoTexto(fin(it)) + ' a las ' + fHora(fin(it)) + '.');
 }
 function programarRecordatorios(it) {
   q.run('DELETE FROM recordatorios WHERE item_id = ? AND enviado = 0', it.id);
@@ -233,10 +234,10 @@ function enviarRecordatoriosVencidos() {
     q.run('UPDATE recordatorios SET enviado = 1 WHERE id = ?', r.id);
     const it = getItem(r.item_id); if (!it || !activo(it)) continue;
     if (ES_TAREA(it.tipo)) {
-      crearAviso({ para: r.para, titulo: r.etiqueta === 'vence' ? 'Tarea vencida sin completar' : 'Se acerca una entrega', cuerpo: textoTarea(it, r.etiqueta), itemId: it.id, urgente: r.urgente === 1, pushCuerpo: (r.etiqueta === 'vence' ? 'Venció · ' : 'Entrega · ') + it.tipo + ' · ' + empresaNombre(it.empresa) + ' · ' + fHora(fin(it)) });
+      crearAviso({ para: r.para, titulo: r.etiqueta === 'vence' ? 'Tarea vencida sin completar' : 'Se acerca una entrega', cuerpo: textoTarea(it, r.etiqueta), itemId: it.id, urgente: r.urgente === 1, pushCuerpo: (r.etiqueta === 'vence' ? 'Venció · ' : 'Entrega · ') + it.tipo + ' · ' + nombresEmpresas(it) + ' · ' + fHora(fin(it)) });
     } else {
       if (it.confirm && it.confirm[r.para] === 'no') continue;
-      crearAviso({ para: r.para, titulo: 'Recordatorio · ' + it.nombre, cuerpo: textoAviso(it, r.para), itemId: it.id, urgente: r.urgente === 1, pushCuerpo: it.tipo + ' · ' + empresaNombre(it.empresa) + ' · ' + fHora(it.inicio) + ' · ' + r.etiqueta });
+      crearAviso({ para: r.para, titulo: 'Recordatorio · ' + it.nombre, cuerpo: textoAviso(it, r.para), itemId: it.id, urgente: r.urgente === 1, pushCuerpo: it.tipo + ' · ' + nombresEmpresas(it) + ' · ' + fHora(it.inicio) + ' · ' + r.etiqueta });
     }
   }
 }
@@ -256,7 +257,7 @@ function revisarAlertas() {
     }
     if (ES_TAREA(it.tipo) && it.estado !== 'en_revision' && f < ahora) {
       const dias = Math.floor((ahora - f) / 86400000);
-      if (dias >= 2 && marcar('retraso:' + it.id)) responsablesDe(it.empresa).filter(x => x !== it.dueño).forEach(pid => crearAviso({ para: pid, titulo: 'Retraso importante', cuerpo: '“' + it.nombre + '” de ' + nombreDe(it.dueño) + ' (' + empresaNombre(it.empresa) + ') lleva ' + dias + ' días de retraso.', itemId: it.id, clave: 'retraso:' + it.id + ':' + pid }));
+      if (dias >= 2 && marcar('retraso:' + it.id)) [...new Set((it.empresas && it.empresas.length ? it.empresas : [it.empresa]).flatMap(responsablesDe))].filter(x => x !== it.dueño).forEach(pid => crearAviso({ para: pid, titulo: 'Retraso importante', cuerpo: '“' + it.nombre + '” de ' + nombreDe(it.dueño) + ' (' + empresaNombre(it.empresa) + ') lleva ' + dias + ' días de retraso.', itemId: it.id, clave: 'retraso:' + it.id + ':' + pid }));
     }
   }
 }
@@ -272,8 +273,8 @@ function enviarResumenes() {
     const tareas = items.filter(it => ES_TAREA(it.tipo) && it.dueño === p.id && activo(it) && diasEntre(ahora, fin(it)) <= 0);
     const porConf = items.filter(it => !ES_TAREA(it.tipo) && it.dueño !== p.id && it.confirm[p.id] === 'pend' && activo(it) && new Date(it.inicio) > ahora);
     if (!citas.length && !tareas.length && !porConf.length) continue;
-    const cuerpo = p.nombre + ', tu día de hoy (' + fLarga(ahora) + '):\n\nCitas (' + citas.length + ')\n' + (citas.length ? citas.map(a => '• ' + fHora(a.inicio) + ' · ' + a.nombre + ' · ' + empresaNombre(a.empresa) + (a.lugar ? ' · ' + a.lugar : '')).join('\n') : '• Sin citas hoy') +
-      '\n\nTareas para hoy o atrasadas (' + tareas.length + ')\n' + (tareas.length ? tareas.map(t => '• ' + t.nombre + ' · ' + empresaNombre(t.empresa)).join('\n') : '• Todo listo') +
+    const cuerpo = p.nombre + ', tu día de hoy (' + fLarga(ahora) + '):\n\nCitas (' + citas.length + ')\n' + (citas.length ? citas.map(a => '• ' + fHora(a.inicio) + ' · ' + a.nombre + ' · ' + nombresEmpresas(a) + (a.lugar ? ' · ' + a.lugar : '')).join('\n') : '• Sin citas hoy') +
+      '\n\nTareas para hoy o atrasadas (' + tareas.length + ')\n' + (tareas.length ? tareas.map(t => '• ' + t.nombre + ' · ' + nombresEmpresas(t)).join('\n') : '• Todo listo') +
       '\n\nPor confirmar (' + porConf.length + ')\n' + (porConf.length ? porConf.map(a => '• ' + a.nombre + ' · ' + cuandoTexto(a.inicio) + ' ' + fHora(a.inicio)).join('\n') : '• Nada por confirmar');
     crearAviso({ para: p.id, titulo: 'Resumen de hoy', cuerpo, clave: 'resumen:' + p.id + ':' + hoy, pushCuerpo: citas.length + ' citas · ' + tareas.length + ' tareas · ' + porConf.length + ' por confirmar' });
   }
@@ -285,4 +286,4 @@ function iniciarProgramador() {
   tick(); setInterval(tick, 60000); setInterval(() => procesarEnvios().catch(e => console.error('Envíos:', e)), 20000);
 }
 
-module.exports = { TZ, fHora, fLarga, fCorta, ymd, hm, cuandoTexto, cap, estadoCanales, configurarCorreo, guardarCorreo, borrarCorreo, configurarPush, appUrl, crearAviso, procesarEnvios, programarRecordatorios, detenerRecordatorios, iniciarProgramador, textoAviso, responsablesDe, nombreDe, empresaNombre, ES_TAREA, activo, fin, enviarCorreo };
+module.exports = { TZ, fHora, fLarga, fCorta, ymd, hm, cuandoTexto, cap, estadoCanales, nombresEmpresas, configurarCorreo, guardarCorreo, borrarCorreo, configurarPush, appUrl, crearAviso, procesarEnvios, programarRecordatorios, detenerRecordatorios, iniciarProgramador, textoAviso, responsablesDe, nombreDe, empresaNombre, ES_TAREA, activo, fin, enviarCorreo };
