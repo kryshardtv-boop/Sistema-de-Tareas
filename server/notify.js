@@ -20,30 +20,51 @@ function fechaBogota(ymdStr, hmStr) { return new Date(`${ymdStr}T${hmStr}:00-05:
 /* ---------- Config de canales ---------- */
 let transporte = null;
 let remitente = '';
+let brevoKey = '';
+const BREVO_URL = process.env.BREVO_URL || 'https://api.brevo.com/v3';
 function datosCorreo() {
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM } = process.env;
-  if (SMTP_HOST && SMTP_USER && SMTP_PASS) return { host: SMTP_HOST, port: Number(SMTP_PORT || 587), user: SMTP_USER, pass: SMTP_PASS, from: MAIL_FROM || SMTP_USER, origen: 'variables del servidor' };
-  const g = getConfig('smtp'); if (g && g.host && g.user && g.pass) return Object.assign({ origen: 'configurado desde la plataforma' }, g);
+  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM, BREVO_API_KEY } = process.env;
+  if (BREVO_API_KEY && MAIL_FROM) return { tipo: 'brevo', apiKey: BREVO_API_KEY, from: MAIL_FROM, origen: 'variables del servidor' };
+  if (SMTP_HOST && SMTP_USER && SMTP_PASS) return { tipo: 'smtp', host: SMTP_HOST, port: Number(SMTP_PORT || 587), user: SMTP_USER, pass: SMTP_PASS, from: MAIL_FROM || SMTP_USER, origen: 'variables del servidor' };
+  const g = getConfig('correo'); if (g && g.tipo === 'brevo' && g.apiKey && g.from) return Object.assign({ origen: 'configurado desde la plataforma' }, g);
+  if (g && g.tipo === 'smtp' && g.host && g.user && g.pass) return Object.assign({ origen: 'configurado desde la plataforma' }, g);
+  const viejo = getConfig('smtp'); if (viejo && viejo.host && viejo.user && viejo.pass) return Object.assign({ tipo: 'smtp', origen: 'configurado desde la plataforma' }, viejo);
   return null;
 }
+async function brevo(ruta, metodo, cuerpo, key) {
+  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const r = await fetch(BREVO_URL + ruta, { method: metodo || 'GET', headers: { 'api-key': key, 'accept': 'application/json', 'content-type': 'application/json' }, body: cuerpo ? JSON.stringify(cuerpo) : undefined, signal: ctrl.signal });
+    const txt = await r.text(); let j = {}; try { j = JSON.parse(txt); } catch (e) { }
+    if (!r.ok) { const msg = j.message || txt || ('HTTP ' + r.status); const e = new Error(r.status === 401 ? 'Brevo rechazó la clave API. Revisa que la hayas copiado completa (empieza por xkeysib-).' : /sender/i.test(msg) ? 'Brevo no acepta ese remitente: el correo debe estar verificado en Brevo (Senders → Add a sender → confirmar el código).' : 'Brevo respondió: ' + msg); e.status = r.status; throw e; }
+    return j;
+  } catch (e) { if (e.name === 'AbortError') throw new Error('Brevo no respondió a tiempo.'); throw e; }
+  finally { clearTimeout(t); }
+}
 async function configurarCorreo() {
-  const d = datosCorreo(); transporte = null;
-  if (!d) { estadoCanales.correo = { ok: false, detalle: 'Sin cuenta de correo. Pulsa “Configurar correo” para conectar un Gmail.', configurable: true }; return estadoCanales.correo; }
+  const d = datosCorreo(); transporte = null; brevoKey = '';
+  if (!d) { estadoCanales.correo = { ok: false, detalle: 'Sin cuenta de correo. Pulsa “Configurar correo” para conectarlo.', configurable: true }; return estadoCanales.correo; }
+  const configurable = d.origen !== 'variables del servidor';
+  if (d.tipo === 'brevo') {
+    try { const cuenta = await brevo('/account', 'GET', null, d.apiKey); brevoKey = d.apiKey; remitente = d.from; estadoCanales.correo = { ok: true, detalle: 'Enviando desde ' + remitente + ' por Brevo (' + (cuenta.email || 'cuenta conectada') + ').', configurable, cuenta: d.from, tipo: 'brevo' }; }
+    catch (e) { estadoCanales.correo = { ok: false, detalle: 'Brevo: ' + (e.message || e), configurable, cuenta: d.from, tipo: 'brevo' }; }
+    return estadoCanales.correo;
+  }
   const puerto = Number(d.port || 587);
-  const t = nodemailer.createTransport({ host: d.host, port: puerto, secure: puerto === 465, auth: { user: d.user, pass: d.pass }, connectionTimeout: 15000 });
-  try { await t.verify(); transporte = t; remitente = d.from || d.user; estadoCanales.correo = { ok: true, detalle: 'Enviando desde ' + remitente + ' (' + d.origen + ').', configurable: d.origen !== 'variables del servidor', cuenta: d.user, host: d.host }; }
-  catch (e) { estadoCanales.correo = { ok: false, detalle: 'No se pudo conectar con ' + d.user + ': ' + traducirErrorCorreo(e), configurable: d.origen !== 'variables del servidor', cuenta: d.user, host: d.host }; }
+  const t = nodemailer.createTransport({ host: d.host, port: puerto, secure: puerto === 465, auth: { user: d.user, pass: d.pass }, connectionTimeout: 12000 });
+  try { await t.verify(); transporte = t; remitente = d.from || d.user; estadoCanales.correo = { ok: true, detalle: 'Enviando desde ' + remitente + ' por SMTP (' + d.origen + ').', configurable, cuenta: d.user, host: d.host, tipo: 'smtp' }; }
+  catch (e) { estadoCanales.correo = { ok: false, detalle: 'No se pudo conectar con ' + d.user + ': ' + traducirErrorCorreo(e), configurable, cuenta: d.user, host: d.host, tipo: 'smtp' }; }
   return estadoCanales.correo;
 }
 function traducirErrorCorreo(e) {
   const m = String(e && e.message || e);
-  if (/Invalid login|535|BadCredentials|Username and Password not accepted/i.test(m)) return 'Google rechazó la clave. Debe ser una contraseña de aplicación de 16 letras (no la contraseña normal) y la verificación en 2 pasos debe estar activa.';
+  if (/Invalid login|535|BadCredentials|Username and Password not accepted/i.test(m)) return 'Google rechazó la clave. Debe ser una contraseña de aplicación de 16 letras y la verificación en 2 pasos debe estar activa.';
   if (/ENOTFOUND|EAI_AGAIN/i.test(m)) return 'no se encontró el servidor (revisa el host).';
-  if (/ETIMEDOUT|timeout/i.test(m)) return 'tiempo de espera agotado (revisa host y puerto).';
+  if (/ETIMEDOUT|timeout/i.test(m)) return 'tiempo de espera agotado. En Railway, los planes gratis y Hobby bloquean SMTP; usa la opción Brevo.';
   return m.slice(0, 160);
 }
-function guardarCorreo(d) { setConfig('smtp', { host: d.host, port: Number(d.port) || 465, user: d.user, pass: d.pass, from: d.from || d.user }); return configurarCorreo(); }
-function borrarCorreo() { setConfig('smtp', {}); return configurarCorreo(); }
+function guardarCorreo(d) { if (d.tipo === 'brevo') setConfig('correo', { tipo: 'brevo', apiKey: d.apiKey, from: d.from }); else setConfig('correo', { tipo: 'smtp', host: d.host, port: Number(d.port) || 465, user: d.user, pass: d.pass, from: d.from || d.user }); setConfig('smtp', {}); return configurarCorreo(); }
+function borrarCorreo() { setConfig('correo', {}); setConfig('smtp', {}); return configurarCorreo(); }
 function configurarPush() {
   let pub = process.env.VAPID_PUBLIC_KEY, priv = process.env.VAPID_PRIVATE_KEY;
   if (!pub || !priv) {
@@ -112,7 +133,7 @@ async function procesarEnvios() {
   } finally { procesando = false; }
 }
 async function enviarCorreo(p, aviso) {
-  if (!transporte) throw new Error('Correo sin configurar');
+  if (!transporte && !brevoKey) throw new Error('Correo sin configurar');
   const url = appUrl() + (aviso.item_id ? '/?item=' + encodeURIComponent(aviso.item_id) : '/');
   const html = `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1b2030">
     <div style="font-size:13px;color:#5f6880;margin-bottom:8px">Agenda del Grupo</div>
@@ -120,6 +141,7 @@ async function enviarCorreo(p, aviso) {
     <p style="font-size:16px;line-height:1.5">${esc(aviso.cuerpo)}</p>
     <p style="margin:24px 0"><a href="${url}" style="background:#4f46e5;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:bold;display:inline-block">${aviso.item_id ? 'Abrir actividad' : 'Abrir la agenda'}</a></p>
     <p style="font-size:12px;color:#5f6880">Puedes cambiar cómo te avisamos en Ajustes de avisos dentro de la plataforma.</p></div>`;
+  if (brevoKey) { await brevo('/smtp/email', 'POST', { sender: { name: 'Agenda del Grupo', email: remitente }, to: [{ email: p.correo }], subject: aviso.titulo + ' · Agenda del Grupo', htmlContent: html, textContent: aviso.cuerpo + '\n\n' + url }, brevoKey); return; }
   await transporte.sendMail({ from: '"Agenda del Grupo" <' + remitente + '>', to: p.correo, subject: aviso.titulo + ' · Agenda del Grupo', text: aviso.cuerpo + '\n\n' + url, html });
 }
 async function enviarPush(p, aviso, cuerpoCorto) {

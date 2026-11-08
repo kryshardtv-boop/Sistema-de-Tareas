@@ -321,19 +321,28 @@ app.delete('/api/empresas/:id', auth.requiereAdmin, (req, res) => {
 });
 app.put('/api/config/offsets', auth.requiereAdmin, (req, res) => { const offs = (Array.isArray(req.body.offsets) ? req.body.offsets : []).map(Number).filter(o => [2880, 1440, 120, 60, 30, 15].includes(o)); if (!offs.length) return err(res, 400, 'Elige al menos un recordatorio.'); setConfig('offsets_equipo', offs); res.json({ ok: true }); });
 app.post('/api/admin/correo', auth.requiereAdmin, async (req, res) => {
-  const b = req.body || {}; const user = String(b.user || '').trim(); const pass = String(b.pass || '').replace(/\s+/g, '');
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(user)) return err(res, 400, 'Escribe el correo completo (ejemplo: nombre@gmail.com).');
-  if (!pass) return err(res, 400, 'Falta la contraseña de aplicación.');
-  const esGmail = /@gmail\.com$|@googlemail\.com$/i.test(user) || b.proveedor === 'gmail';
-  const host = esGmail ? 'smtp.gmail.com' : String(b.host || '').trim(); const port = esGmail ? 465 : (Number(b.port) || 587);
-  if (!host) return err(res, 400, 'Para otro proveedor escribe el servidor SMTP (host).');
-  if (process.env.SMTP_HOST) return err(res, 400, 'El correo está fijado con variables del servidor; cámbialo en Railway.');
-  const estado = await N.guardarCorreo({ host, port, user, pass, from: user });
+  const b = req.body || {};
+  if (process.env.SMTP_HOST || process.env.BREVO_API_KEY) return err(res, 400, 'El correo está fijado con variables del servidor; cámbialo en Railway.');
+  let datos;
+  if ((b.tipo || 'brevo') === 'brevo') {
+    const apiKey = String(b.apiKey || '').trim(); const from = String(b.from || '').trim().toLowerCase();
+    if (!apiKey) return err(res, 400, 'Pega la clave API de Brevo.');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(from)) return err(res, 400, 'Escribe el correo remitente (el que verificaste en Brevo).');
+    datos = { tipo: 'brevo', apiKey, from };
+  } else {
+    const user = String(b.user || '').trim(); const pass = String(b.pass || '').replace(/\s+/g, '');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(user)) return err(res, 400, 'Escribe el correo completo.');
+    if (!pass) return err(res, 400, 'Falta la contraseña de aplicación.');
+    const esGmail = /@gmail\.com$|@googlemail\.com$/i.test(user); const host = esGmail ? 'smtp.gmail.com' : String(b.host || '').trim(); const port = esGmail ? 465 : (Number(b.port) || 587);
+    if (!host) return err(res, 400, 'Escribe el servidor SMTP (host).');
+    datos = { tipo: 'smtp', host, port, user, pass, from: user };
+  }
+  const estado = await N.guardarCorreo(datos);
   if (!estado.ok) { await N.borrarCorreo(); return err(res, 400, estado.detalle); }
-  if (req.yo.correo) { try { await N.enviarCorreo({ correo: req.yo.correo }, { titulo: 'Correo configurado', cuerpo: 'Listo: la Agenda del Grupo ya envía correos desde ' + user + '.', item_id: null }); } catch (e) { } }
+  if (req.yo.correo) { try { await N.enviarCorreo({ correo: req.yo.correo }, { titulo: 'Correo configurado', cuerpo: 'Listo: la Agenda del Grupo ya envía correos desde ' + datos.from + '.', item_id: null }); } catch (e) { await N.borrarCorreo(); return err(res, 400, 'Se conectó, pero el envío de prueba falló: ' + (e.message || e)); } }
   res.json({ ok: true, detalle: estado.detalle, prueba: req.yo.correo ? 'Te enviamos un correo de prueba a ' + req.yo.correo + '.' : 'Agrega tu correo en Editar mis datos para recibir pruebas.' });
 });
-app.delete('/api/admin/correo', auth.requiereAdmin, async (req, res) => { if (process.env.SMTP_HOST) return err(res, 400, 'El correo está fijado con variables del servidor.'); const estado = await N.borrarCorreo(); res.json({ ok: true, detalle: estado.detalle }); });
+app.delete('/api/admin/correo', auth.requiereAdmin, async (req, res) => { if (process.env.SMTP_HOST || process.env.BREVO_API_KEY) return err(res, 400, 'El correo está fijado con variables del servidor.'); const estado = await N.borrarCorreo(); res.json({ ok: true, detalle: estado.detalle }); });
 app.post('/api/admin/probar-correo', auth.requiereAdmin, async (req, res) => { if (!N.estadoCanales.correo.ok) return err(res, 400, N.estadoCanales.correo.detalle); if (!req.yo.correo) return err(res, 400, 'Tu usuario no tiene correo.'); try { await N.enviarCorreo({ correo: req.yo.correo }, { titulo: 'Prueba de correo', cuerpo: 'Si lees esto, el correo de la Agenda del Grupo está funcionando.', item_id: null }); res.json({ ok: true, mensaje: 'Correo de prueba enviado a ' + req.yo.correo }); } catch (e) { err(res, 500, 'No se pudo enviar: ' + (e.message || e)); } });
 
 app.use('/api', (req, res) => err(res, 404, 'Ruta no encontrada.'));

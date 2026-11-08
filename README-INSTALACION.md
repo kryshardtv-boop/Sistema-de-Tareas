@@ -68,17 +68,23 @@ Tiempo estimado: 20 a 30 minutos la primera vez.
 
 ## 5. Activar el correo (recomendado)
 
-Se configura **desde la misma plataforma**, sin tocar Railway:
+Importante: **Railway bloquea el envío por SMTP (Gmail directo) en los planes gratis, de prueba y Hobby**; solo lo
+permite en el plan Pro. Por eso la plataforma envía por **Brevo** (gratis, 300 correos al día, funciona en cualquier
+plan de Railway). Los correos salen a nombre de tu Gmail.
 
-1. Entra como administrador → **Directorio** → **Estado de canales** → **Configurar correo**.
-2. El panel te guía: con la cuenta de Gmail que va a enviar los correos, activa la **Verificación en 2 pasos**
-   y crea una **Contraseña de aplicación** (Google te da una clave de 16 letras).
-3. Escribe la cuenta de Gmail y pega la clave → **Guardar y probar**. La plataforma prueba la conexión, la guarda
-   y te envía un correo de prueba. Desde ahí, invitaciones y avisos también salen por correo.
-4. Si usas otro proveedor (Brevo, Outlook, tu dominio), abre "Uso otro proveedor" y escribe servidor y puerto.
+Se configura desde la misma plataforma:
 
-También puedes fijarlo con variables en Railway (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`);
-si existen, mandan sobre lo configurado en la plataforma.
+1. Crea una cuenta gratis en brevo.com con tu Gmail.
+2. En Brevo: **Senders & IP → Senders → Add a sender** → tu nombre y tu Gmail → confirma el código que te llega al correo.
+3. En Brevo: tu perfil (arriba a la derecha) → **SMTP & API → API Keys → Generate a new API key** → nombre "Agenda" →
+   copia la clave (empieza por `xkeysib-`; solo se muestra una vez).
+4. En la plataforma, como administrador: **Directorio → Estado de canales → Configurar correo** → pestaña **Brevo** →
+   escribe el correo remitente (el que verificaste) y pega la clave → **Guardar y probar**.
+5. La plataforma prueba la conexión, la guarda y te envía un correo de prueba. "Correo electrónico" pasa a **Configurado**.
+
+Si tu Railway es plan Pro, también puedes usar la pestaña **Gmail por SMTP** (contraseña de aplicación de Google) o las
+variables `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`. Para Brevo por variables: `BREVO_API_KEY` y
+`MAIL_FROM`. Las variables mandan sobre lo configurado en la plataforma.
 
 ## 5b. Empresas
 
@@ -128,6 +134,7 @@ los existentes) y haz commit. Railway despliega solo. Los datos no se pierden po
 | `DATA_DIR` | sí (`/data`) | Dónde guarda la base de datos y los archivos adjuntos |
 | `APP_URL` | recomendada | Dirección pública, usada en los enlaces de correos y avisos |
 | `TZ` | recomendada (`America/Bogota`) | Zona horaria del servidor |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | para correo | Envío de correos |
+| `BREVO_API_KEY` + `MAIL_FROM` | no (se puede hacer desde la plataforma) | Correo por Brevo (HTTPS, funciona en cualquier plan) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | no (solo plan Pro) | Correo por SMTP |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | no | Solo si quieres fijar tus propias claves push |
 | `PORT` | no | Railway la pone sola |
