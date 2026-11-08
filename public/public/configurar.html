@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Configurar · Agenda del Grupo</title>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&display=swap" rel="stylesheet"><link rel="stylesheet" href="/acceso.css"></head>
+<body><form class="box" id="f"><div class="logo">AG</div><div><h1>Primer ingreso</h1><p>Crea el acceso del administrador general. Solo se hace una vez.</p></div>
+<div><label for="nombre">Tu nombre</label><input id="nombre" value="Cristian" required></div>
+<div><label for="correo">Tu correo</label><input id="correo" type="email" required placeholder="tu@correo.com" autocomplete="username"></div>
+<div><label for="clave">Contraseña (mínimo 8 caracteres)</label><input id="clave" type="password" minlength="8" required autocomplete="new-password"></div>
+<div class="msg" id="msg"></div><button class="btn" id="btn">Crear acceso y entrar</button></form>
+<script>
+const f=document.getElementById('f'),msg=document.getElementById('msg'),btn=document.getElementById('btn');
+f.addEventListener('submit',async e=>{e.preventDefault();btn.disabled=true;btn.textContent='Guardando…';msg.className='msg';
+ try{const r=await fetch('/api/configurar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nombre:nombre.value,correo:correo.value,clave:clave.value})});const j=await r.json();if(!r.ok)throw new Error(j.error);location.href='/';}
+ catch(err){msg.textContent=err.message||'No se pudo guardar.';msg.className='msg bad';btn.disabled=false;btn.textContent='Crear acceso y entrar';}});
+</script></body></html>
