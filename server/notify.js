@@ -19,14 +19,31 @@ function fechaBogota(ymdStr, hmStr) { return new Date(`${ymdStr}T${hmStr}:00-05:
 
 /* ---------- Config de canales ---------- */
 let transporte = null;
-async function configurarCorreo() {
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) { estadoCanales.correo = { ok: false, detalle: 'Falta configurar SMTP_HOST, SMTP_USER y SMTP_PASS en el servidor.' }; return; }
-  const puerto = Number(SMTP_PORT || 587);
-  transporte = nodemailer.createTransport({ host: SMTP_HOST, port: puerto, secure: puerto === 465, auth: { user: SMTP_USER, pass: SMTP_PASS } });
-  try { await transporte.verify(); estadoCanales.correo = { ok: true, detalle: 'Conectado a ' + SMTP_HOST + ' como ' + SMTP_USER }; }
-  catch (e) { estadoCanales.correo = { ok: false, detalle: 'No se pudo conectar al servidor de correo: ' + (e.message || e) }; transporte = null; }
+let remitente = '';
+function datosCorreo() {
+  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM } = process.env;
+  if (SMTP_HOST && SMTP_USER && SMTP_PASS) return { host: SMTP_HOST, port: Number(SMTP_PORT || 587), user: SMTP_USER, pass: SMTP_PASS, from: MAIL_FROM || SMTP_USER, origen: 'variables del servidor' };
+  const g = getConfig('smtp'); if (g && g.host && g.user && g.pass) return Object.assign({ origen: 'configurado desde la plataforma' }, g);
+  return null;
 }
+async function configurarCorreo() {
+  const d = datosCorreo(); transporte = null;
+  if (!d) { estadoCanales.correo = { ok: false, detalle: 'Sin cuenta de correo. Pulsa “Configurar correo” para conectar un Gmail.', configurable: true }; return estadoCanales.correo; }
+  const puerto = Number(d.port || 587);
+  const t = nodemailer.createTransport({ host: d.host, port: puerto, secure: puerto === 465, auth: { user: d.user, pass: d.pass }, connectionTimeout: 15000 });
+  try { await t.verify(); transporte = t; remitente = d.from || d.user; estadoCanales.correo = { ok: true, detalle: 'Enviando desde ' + remitente + ' (' + d.origen + ').', configurable: d.origen !== 'variables del servidor', cuenta: d.user, host: d.host }; }
+  catch (e) { estadoCanales.correo = { ok: false, detalle: 'No se pudo conectar con ' + d.user + ': ' + traducirErrorCorreo(e), configurable: d.origen !== 'variables del servidor', cuenta: d.user, host: d.host }; }
+  return estadoCanales.correo;
+}
+function traducirErrorCorreo(e) {
+  const m = String(e && e.message || e);
+  if (/Invalid login|535|BadCredentials|Username and Password not accepted/i.test(m)) return 'Google rechazó la clave. Debe ser una contraseña de aplicación de 16 letras (no la contraseña normal) y la verificación en 2 pasos debe estar activa.';
+  if (/ENOTFOUND|EAI_AGAIN/i.test(m)) return 'no se encontró el servidor (revisa el host).';
+  if (/ETIMEDOUT|timeout/i.test(m)) return 'tiempo de espera agotado (revisa host y puerto).';
+  return m.slice(0, 160);
+}
+function guardarCorreo(d) { setConfig('smtp', { host: d.host, port: Number(d.port) || 465, user: d.user, pass: d.pass, from: d.from || d.user }); return configurarCorreo(); }
+function borrarCorreo() { setConfig('smtp', {}); return configurarCorreo(); }
 function configurarPush() {
   let pub = process.env.VAPID_PUBLIC_KEY, priv = process.env.VAPID_PRIVATE_KEY;
   if (!pub || !priv) {
@@ -103,7 +120,7 @@ async function enviarCorreo(p, aviso) {
     <p style="font-size:16px;line-height:1.5">${esc(aviso.cuerpo)}</p>
     <p style="margin:24px 0"><a href="${url}" style="background:#4f46e5;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:bold;display:inline-block">${aviso.item_id ? 'Abrir actividad' : 'Abrir la agenda'}</a></p>
     <p style="font-size:12px;color:#5f6880">Puedes cambiar cómo te avisamos en Ajustes de avisos dentro de la plataforma.</p></div>`;
-  await transporte.sendMail({ from: process.env.MAIL_FROM || process.env.SMTP_USER, to: p.correo, subject: aviso.titulo + ' · Agenda del Grupo', text: aviso.cuerpo + '\n\n' + url, html });
+  await transporte.sendMail({ from: '"Agenda del Grupo" <' + remitente + '>', to: p.correo, subject: aviso.titulo + ' · Agenda del Grupo', text: aviso.cuerpo + '\n\n' + url, html });
 }
 async function enviarPush(p, aviso, cuerpoCorto) {
   const subs = q.all('SELECT * FROM suscripciones WHERE persona = ?', p.id);
@@ -210,4 +227,4 @@ function iniciarProgramador() {
   tick(); setInterval(tick, 60000); setInterval(() => procesarEnvios().catch(e => console.error('Envíos:', e)), 20000);
 }
 
-module.exports = { TZ, fHora, fLarga, fCorta, ymd, hm, cuandoTexto, cap, estadoCanales, configurarCorreo, configurarPush, appUrl, crearAviso, procesarEnvios, programarRecordatorios, detenerRecordatorios, iniciarProgramador, textoAviso, responsablesDe, nombreDe, empresaNombre, ES_TAREA, activo, fin, enviarCorreo };
+module.exports = { TZ, fHora, fLarga, fCorta, ymd, hm, cuandoTexto, cap, estadoCanales, configurarCorreo, guardarCorreo, borrarCorreo, configurarPush, appUrl, crearAviso, procesarEnvios, programarRecordatorios, detenerRecordatorios, iniciarProgramador, textoAviso, responsablesDe, nombreDe, empresaNombre, ES_TAREA, activo, fin, enviarCorreo };

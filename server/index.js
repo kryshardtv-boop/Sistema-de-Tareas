@@ -300,8 +300,40 @@ app.post('/api/personas/:id/accion', auth.requiereAdmin, async (req, res) => {
   }
   err(res, 400, 'Acción desconocida.');
 });
-app.put('/api/empresas/:id', auth.requiereAdmin, (req, res) => { const { color, nombre } = req.body || {}; if (!q.get('SELECT id FROM empresas WHERE id = ?', req.params.id)) return err(res, 404, 'La empresa no existe.'); if (color && /^#[0-9a-f]{6}$/i.test(color)) q.run('UPDATE empresas SET color = ? WHERE id = ?', color, req.params.id); if (nombre && String(nombre).trim()) q.run('UPDATE empresas SET nombre = ? WHERE id = ?', String(nombre).trim().slice(0, 60), req.params.id); res.json({ ok: true }); });
+app.put('/api/empresas/:id', auth.requiereAdmin, (req, res) => { const { color, nombre } = req.body || {}; if (!q.get('SELECT id FROM empresas WHERE id = ?', req.params.id)) return err(res, 404, 'La empresa no existe.'); if (color && /^#[0-9a-f]{6}$/i.test(color)) q.run('UPDATE empresas SET color = ? WHERE id = ?', color, req.params.id); if (nombre !== undefined) { const n = String(nombre).trim().slice(0, 60); if (!n) return err(res, 400, 'El nombre no puede quedar vacío.'); if (q.get('SELECT id FROM empresas WHERE lower(nombre) = ? AND id <> ?', n.toLowerCase(), req.params.id)) return err(res, 400, 'Ya hay una empresa con ese nombre.'); q.run('UPDATE empresas SET nombre = ? WHERE id = ?', n, req.params.id); } res.json({ ok: true }); });
+app.post('/api/empresas', auth.requiereAdmin, (req, res) => {
+  const n = String((req.body || {}).nombre || '').trim().slice(0, 60); const color = /^#[0-9a-f]{6}$/i.test((req.body || {}).color || '') ? req.body.color : '#' + crypto.randomBytes(3).toString('hex');
+  if (!n) return err(res, 400, 'Escribe el nombre de la empresa.');
+  if (q.get('SELECT id FROM empresas WHERE lower(nombre) = ?', n.toLowerCase())) return err(res, 400, 'Ya hay una empresa con ese nombre.');
+  let id = slug(n) || 'e'; if (q.get('SELECT id FROM empresas WHERE id = ?', id)) id += '-' + crypto.randomBytes(2).toString('hex');
+  const orden = (q.get('SELECT MAX(orden) AS m FROM empresas').m || 0) + 1;
+  q.run('INSERT INTO empresas (id, nombre, color, orden) VALUES (?, ?, ?, ?)', id, n, color, orden);
+  if (req.body.agregarme !== false) { const emps = req.yo.empresas.concat([id]); q.run('UPDATE personas SET empresas = ? WHERE id = ?', JSON.stringify([...new Set(emps)]), req.yo.id); }
+  res.json({ ok: true, id });
+});
+app.delete('/api/empresas/:id', auth.requiereAdmin, (req, res) => {
+  const id = req.params.id; if (!q.get('SELECT id FROM empresas WHERE id = ?', id)) return err(res, 404, 'La empresa no existe.');
+  const n = q.get('SELECT COUNT(*) AS n FROM items WHERE empresa = ?', id).n; if (n) return err(res, 400, 'No se puede eliminar: tiene ' + n + ' actividad' + (n === 1 ? '' : 'es') + ' registrada' + (n === 1 ? '' : 's') + '. Puedes cambiarle el nombre o el color.');
+  if (q.get('SELECT COUNT(*) AS n FROM empresas').n <= 1) return err(res, 400, 'Debe quedar al menos una empresa.');
+  q.run('DELETE FROM empresas WHERE id = ?', id);
+  q.all('SELECT id, empresas FROM personas').forEach(p => { const e = (J(p.empresas) || []).filter(x => x !== id); q.run('UPDATE personas SET empresas = ? WHERE id = ?', JSON.stringify(e), p.id); });
+  res.json({ ok: true });
+});
 app.put('/api/config/offsets', auth.requiereAdmin, (req, res) => { const offs = (Array.isArray(req.body.offsets) ? req.body.offsets : []).map(Number).filter(o => [2880, 1440, 120, 60, 30, 15].includes(o)); if (!offs.length) return err(res, 400, 'Elige al menos un recordatorio.'); setConfig('offsets_equipo', offs); res.json({ ok: true }); });
+app.post('/api/admin/correo', auth.requiereAdmin, async (req, res) => {
+  const b = req.body || {}; const user = String(b.user || '').trim(); const pass = String(b.pass || '').replace(/\s+/g, '');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(user)) return err(res, 400, 'Escribe el correo completo (ejemplo: nombre@gmail.com).');
+  if (!pass) return err(res, 400, 'Falta la contraseña de aplicación.');
+  const esGmail = /@gmail\.com$|@googlemail\.com$/i.test(user) || b.proveedor === 'gmail';
+  const host = esGmail ? 'smtp.gmail.com' : String(b.host || '').trim(); const port = esGmail ? 465 : (Number(b.port) || 587);
+  if (!host) return err(res, 400, 'Para otro proveedor escribe el servidor SMTP (host).');
+  if (process.env.SMTP_HOST) return err(res, 400, 'El correo está fijado con variables del servidor; cámbialo en Railway.');
+  const estado = await N.guardarCorreo({ host, port, user, pass, from: user });
+  if (!estado.ok) { await N.borrarCorreo(); return err(res, 400, estado.detalle); }
+  if (req.yo.correo) { try { await N.enviarCorreo({ correo: req.yo.correo }, { titulo: 'Correo configurado', cuerpo: 'Listo: la Agenda del Grupo ya envía correos desde ' + user + '.', item_id: null }); } catch (e) { } }
+  res.json({ ok: true, detalle: estado.detalle, prueba: req.yo.correo ? 'Te enviamos un correo de prueba a ' + req.yo.correo + '.' : 'Agrega tu correo en Editar mis datos para recibir pruebas.' });
+});
+app.delete('/api/admin/correo', auth.requiereAdmin, async (req, res) => { if (process.env.SMTP_HOST) return err(res, 400, 'El correo está fijado con variables del servidor.'); const estado = await N.borrarCorreo(); res.json({ ok: true, detalle: estado.detalle }); });
 app.post('/api/admin/probar-correo', auth.requiereAdmin, async (req, res) => { if (!N.estadoCanales.correo.ok) return err(res, 400, N.estadoCanales.correo.detalle); if (!req.yo.correo) return err(res, 400, 'Tu usuario no tiene correo.'); try { await N.enviarCorreo({ correo: req.yo.correo }, { titulo: 'Prueba de correo', cuerpo: 'Si lees esto, el correo de la Agenda del Grupo está funcionando.', item_id: null }); res.json({ ok: true, mensaje: 'Correo de prueba enviado a ' + req.yo.correo }); } catch (e) { err(res, 500, 'No se pudo enviar: ' + (e.message || e)); } });
 
 app.use('/api', (req, res) => err(res, 404, 'Ruta no encontrada.'));
