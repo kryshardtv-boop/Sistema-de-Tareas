@@ -1,5 +1,5 @@
 // Service worker: avisos push y respaldo sin conexión
-const CACHE = 'agenda-v1';
+const CACHE = 'agenda-v2';
 const BASE = ['/acceso.css', '/sin-conexion.html', '/manifest.webmanifest', '/iconos/icono-192.png', '/iconos/icono-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(BASE)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
@@ -12,7 +12,9 @@ self.addEventListener('fetch', e => {
 });
 self.addEventListener('push', e => {
   let d = {}; try { d = e.data ? e.data.json() : {}; } catch (err) { d = { cuerpo: e.data ? e.data.text() : '' }; }
-  e.waitUntil(self.registration.showNotification(d.titulo || 'Agenda del Grupo', { body: d.cuerpo || '', icon: '/iconos/icono-192.png', badge: '/iconos/icono-192.png', tag: d.tag || undefined, data: { url: d.url || '/' } }));
+  const mostrar = self.registration.showNotification(d.titulo || 'Agenda del Grupo', { body: d.cuerpo || '', icon: '/iconos/icono-192.png', badge: '/iconos/icono-192.png', tag: d.tag || undefined, renotify: !!d.tag, vibrate: [200, 100, 200], silent: false, timestamp: Date.now(), data: { url: d.url || '/' } });
+  const badge = (typeof d.noLeidos === 'number' && 'setAppBadge' in self.navigator) ? (d.noLeidos > 0 ? self.navigator.setAppBadge(d.noLeidos) : self.navigator.clearAppBadge()).catch(() => {}) : Promise.resolve();
+  e.waitUntil(Promise.all([mostrar, badge]));
 });
 self.addEventListener('notificationclick', e => {
   e.notification.close(); const url = (e.notification.data && e.notification.data.url) || '/';

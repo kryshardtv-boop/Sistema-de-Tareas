@@ -183,7 +183,8 @@ async function enviarCorreo(p, aviso) {
 async function enviarPush(p, aviso, cuerpoCorto) {
   const subs = q.all('SELECT * FROM suscripciones WHERE persona = ?', p.id);
   if (!subs.length) throw new Error('Celular sin activar');
-  const payload = JSON.stringify({ titulo: 'Agenda del Grupo', cuerpo: cuerpoCorto || aviso.titulo, url: appUrl() + (aviso.item_id ? '/?item=' + encodeURIComponent(aviso.item_id) : '/'), tag: 'aviso-' + aviso.id });
+  const noLeidos = q.get('SELECT COUNT(*) AS n FROM avisos WHERE para = ? AND leida = 0', p.id).n;
+  const payload = JSON.stringify({ titulo: 'Agenda del Grupo', cuerpo: cuerpoCorto || aviso.titulo, url: appUrl() + (aviso.item_id ? '/?item=' + encodeURIComponent(aviso.item_id) : '/'), tag: 'aviso-' + aviso.id, noLeidos });
   let ok = 0, ultimo = null;
   for (const s of subs) {
     try { await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 3600 }); ok++; }

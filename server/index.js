@@ -250,6 +250,16 @@ app.post('/api/push/suscribir', (req, res) => {
   N.procesarEnvios().catch(() => {});
   res.json({ ok: true });
 });
+app.post('/api/push/probar', async (req, res) => {
+  const subs = q.get('SELECT COUNT(*) AS n FROM suscripciones WHERE persona = ?', req.yo.id).n;
+  if (!subs) return err(res, 400, 'Este usuario no tiene ningún celular activado. Pulsa “Activar” en Avisos en el celular.');
+  if (!N.estadoCanales.push.ok) return err(res, 400, 'El servidor no tiene la clave push lista: ' + N.estadoCanales.push.detalle);
+  const id = N.crearAviso({ para: req.yo.id, titulo: 'Aviso de prueba', cuerpo: 'Si ves esto en tu celular, los avisos están funcionando. Hora de envío: ' + N.fHora(new Date()) + '.', urgente: true, pushCuerpo: 'Prueba · si lo ves, los avisos funcionan 🎉' });
+  await N.procesarEnvios();
+  const e = q.get("SELECT estado, detalle FROM envios WHERE aviso_id = ? AND canal = 'Push'", id);
+  if (!e || e.estado !== 'Enviado') return err(res, 500, 'No se pudo enviar al celular: ' + ((e && (e.detalle || e.estado)) || 'sin detalle') + '. Prueba desactivar y volver a activar los avisos en este dispositivo.');
+  res.json({ ok: true, mensaje: 'Enviado a ' + subs + ' dispositivo' + (subs === 1 ? '' : 's') + '. Debe sonar en unos segundos, incluso con la app cerrada.' });
+});
 app.delete('/api/push/suscribir', (req, res) => { const { endpoint } = req.body || {}; if (endpoint) q.run('DELETE FROM suscripciones WHERE endpoint = ? AND persona = ?', endpoint, req.yo.id); else q.run('DELETE FROM suscripciones WHERE persona = ?', req.yo.id); if (!q.get('SELECT id FROM suscripciones WHERE persona = ?', req.yo.id)) q.run('UPDATE prefs SET push = 0 WHERE persona = ?', req.yo.id); res.json({ ok: true }); });
 
 /* ---------- Personas (directorio) ---------- */
