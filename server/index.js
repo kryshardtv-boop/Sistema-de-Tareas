@@ -100,7 +100,7 @@ app.post('/api/recuperar', async (req, res) => {
 app.use('/api', (req, res, next) => { if (req.path.startsWith('/configurar') || req.path.startsWith('/entrar') || req.path.startsWith('/invitacion') || req.path.startsWith('/recuperar')) return next(); auth.requiereSesion(req, res, next); });
 
 function itemsPara(yo) {
-  const todos = q.all('SELECT * FROM items ORDER BY inicio').map(filaItem);
+  const todos = q.all("SELECT * FROM items WHERE estado <> 'eliminada' ORDER BY inicio").map(filaItem);
   const coms = q.all('SELECT * FROM comentarios ORDER BY id'); const porItem = {}; coms.forEach(c => (porItem[c.item_id] = porItem[c.item_id] || []).push({ de: c.de, texto: c.texto, fecha: c.fecha }));
   return todos.map(it => { const ve = veDetalles(yo, it); return Object.assign({}, it, { comentarios: ve ? (porItem[it.id] || []) : [], archivos: ve ? it.archivos : [], enlace: ve ? it.enlace : '', nota: ve ? it.nota : '', privado: !ve }); });
 }
@@ -111,6 +111,7 @@ app.get('/api/estado', (req, res) => {
     empresas: q.all('SELECT * FROM empresas ORDER BY orden').map(e => ({ id: e.id, nombre: e.nombre, c: e.color })),
     proyectos: q.all("SELECT DISTINCT proyecto, empresa FROM items WHERE proyecto <> '' ORDER BY proyecto").map(p => ({ nombre: p.proyecto, empresa: p.empresa })),
     items: itemsPara(yo),
+    eliminadas: q.all("SELECT * FROM items WHERE estado = 'eliminada' ORDER BY rowid DESC LIMIT 100").map(filaItem).filter(it => esAdmin(yo) || it.dueño === yo.id || it.personas.includes(yo.id)).map(it => { const h = it.historial.slice().reverse().find(x => /^Eliminada/.test(x.texto)) || {}; return { id: it.id, nombre: it.nombre, tipo: it.tipo, empresa: it.empresa, empresas: it.empresas, inicio: it.inicio, dueño: it.dueño, eliminadaEn: h.fecha || null, detalle: h.texto || '', puedeRestaurar: esAdmin(yo) || it.dueño === yo.id }; }),
     avisos: q.all('SELECT * FROM avisos WHERE para = ? ORDER BY fecha DESC LIMIT 200', yo.id).map(a => ({ id: a.id, titulo: a.titulo, cuerpo: a.cuerpo, itemId: a.item_id, fecha: a.fecha, leida: !!a.leida, canales: q.all('SELECT canal, estado, detalle FROM envios WHERE aviso_id = ?', a.id) })),
     prefs: prefsDe(yo.id), offsetsEquipo: getConfig('offsets_equipo', [1440, 120, 15]),
     push: { clave: N.estadoCanales.push.ok ? N.estadoCanales.push.clave : null, dispositivos: q.get('SELECT COUNT(*) AS n FROM suscripciones WHERE persona = ?', yo.id).n },
@@ -152,7 +153,7 @@ app.post('/api/items', (req, res) => {
 app.put('/api/items/:id', (req, res) => {
   const it = getItem(req.params.id); if (!it) return err(res, 404, 'La actividad ya no existe.');
   if (!puedeEditar(req.yo, it)) return err(res, 403, 'No puedes editar esta actividad. Pídele el cambio a ' + N.nombreDe(it.dueño) + '.');
-  if (!N.activo(it)) return err(res, 400, 'Esta actividad ya está cerrada.');
+  if (it.estado === 'eliminada') return err(res, 400, 'Esta actividad está eliminada. Restáurala primero.');
   const b = Object.assign({}, it, req.body); let d; try { d = leerCuerpoItem(b, req.yo); } catch (e) { return err(res, 400, e.message); }
   const cambioHora = it.inicio !== d.inicio || it.duracion !== d.duracion; const antes = fechaCorta(it.inicio);
   const nuevos = d.personas.filter(p => !it.personas.includes(p)); const salen = it.personas.filter(p => !d.personas.includes(p));
@@ -168,7 +169,7 @@ app.put('/api/items/:id', (req, res) => {
   } else if (cambioHora) hist(it, 'Fecha cambiada por ' + req.yo.nombre + ': de ' + antes + ' a ' + fechaCorta(it.inicio) + '. Recordatorios reprogramados.');
   else hist(it, 'Datos actualizados por ' + req.yo.nombre + '.');
   nuevos.filter(p => p !== req.yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Te agregaron a una actividad', cuerpo: it.nombre + ' · ' + N.nombresEmpresas(it) + ' · ' + N.cuandoTexto(it.inicio) + ' ' + N.fHora(it.inicio) + '.', itemId: it.id, pushCuerpo: 'Nueva · ' + it.tipo + ' · ' + N.fHora(it.inicio) }));
-  guardarItem(it); N.programarRecordatorios(it);
+  guardarItem(it); if (N.activo(it)) N.programarRecordatorios(it); else N.detenerRecordatorios(it.id);
   res.json({ ok: true, movida: cambioHora });
 });
 app.post('/api/items/:id/accion', (req, res) => {
@@ -209,6 +210,14 @@ app.post('/api/items/:id/accion', (req, res) => {
     case 'comentar': if (!veDetalles(yo, it)) return err(res, 403, 'No tienes acceso a los comentarios de esta actividad.');
       { const texto = String((req.body || {}).texto || '').trim().slice(0, 2000); if (!texto) return err(res, 400, 'Escribe el comentario primero.'); q.run('INSERT INTO comentarios (item_id, de, texto, fecha) VALUES (?, ?, ?, ?)', it.id, yo.id, texto, ahoraISO());
         it.personas.filter(p => p !== yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Nuevo comentario en ' + it.nombre, cuerpo: yo.nombre + ': “' + texto + '”', itemId: it.id, pushCuerpo: 'Comentario · ' + yo.nombre })); guardarItem(it); return res.json({ ok: true }); }
+    case 'eliminar': if (!puedeEditar(yo, it)) return err(res, 403, 'No puedes eliminar esta actividad. Pídeselo a ' + N.nombreDe(it.dueño) + ' o a un administrador.');
+      if (it.estado === 'eliminada') return err(res, 400, 'Ya estaba eliminada.');
+      { const n = q.get('SELECT COUNT(*) AS n FROM recordatorios WHERE item_id = ? AND enviado = 0', it.id).n; it.estadoAnterior = it.estado; it.estado = 'eliminada'; hist(it, 'Eliminada por ' + yo.nombre + (motivo ? ': “' + motivo + '”' : '') + '. Queda en el registro y se puede restaurar.' + (n ? ' Se detuvieron ' + n + ' recordatorios.' : '')); N.detenerRecordatorios(it.id);
+        if (it.estadoAnterior !== 'cancelada' && it.estadoAnterior !== 'hecha') it.personas.filter(p => p !== yo.id).forEach(p => N.crearAviso({ para: p, titulo: 'Actividad eliminada', cuerpo: it.nombre + ' · ' + N.nombresEmpresas(it) + ' · ' + N.cuandoTexto(it.inicio) + ' ' + N.fHora(it.inicio) + (motivo ? '. Motivo: ' + motivo : '') + '. La eliminó ' + yo.nombre + '.', pushCuerpo: 'Eliminada · ' + it.tipo + ' · ' + N.fHora(it.inicio) })); } break;
+    case 'restaurar': if (it.estado !== 'eliminada') return err(res, 400, 'Esta actividad no está eliminada.'); if (!(esAdmin(yo) || it.dueño === yo.id)) return err(res, 403, 'Solo el responsable o un administrador pueden restaurarla.');
+      it.estado = 'pendiente'; hist(it, 'Restaurada por ' + yo.nombre + '.'); guardarItem(it); N.programarRecordatorios(it); return res.json({ ok: true });
+    case 'reabrir': if (!puedeEditar(yo, it)) return err(res, 403, 'No puedes reabrir esta actividad.'); if (!['hecha', 'cancelada'].includes(it.estado)) return err(res, 400, 'Esta actividad no está cerrada.');
+      it.estado = 'pendiente'; hist(it, 'Reabierta por ' + yo.nombre + '.'); guardarItem(it); N.programarRecordatorios(it); return res.json({ ok: true });
     case 'recordatorios': if (!puedeEditar(yo, it)) return err(res, 403, 'Solo el responsable puede ajustar los recordatorios.');
       { const offs = (Array.isArray(req.body.offsets) ? req.body.offsets : []).map(Number).filter(o => [2880, 1440, 120, 60, 30, 15].includes(o)); if (!offs.length) return err(res, 400, 'Elige al menos un recordatorio.');
         if (req.body.paraEquipo && esAdmin(yo)) { setConfig('offsets_equipo', offs); it.offsets = null; } else it.offsets = offs; hist(it, 'Recordatorios ajustados por ' + yo.nombre + '.'); guardarItem(it); N.programarRecordatorios(it); return res.json({ ok: true }); }

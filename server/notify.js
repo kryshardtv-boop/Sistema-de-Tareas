@@ -197,7 +197,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 /* ---------- Recordatorios ---------- */
 const ES_TAREA = t => t === 'Tarea' || t === 'Entrega';
 const OFFSET_LABELS = { 2880: '2 días antes', 1440: '1 día antes', 120: '2 horas antes', 60: '1 hora antes', 30: '30 minutos antes', 15: '15 minutos antes' };
-const activo = it => !['cancelada', 'hecha'].includes(it.estado);
+const activo = it => !['cancelada', 'hecha', 'eliminada'].includes(it.estado);
 function fin(it) { return new Date(new Date(it.inicio).getTime() + it.duracion * 60000); }
 function nombreDe(id) { const p = getPersona(id); return p ? p.nombre : id; }
 function empresaNombre(id) { const e = q.get('SELECT nombre FROM empresas WHERE id = ?', id); return e ? e.nombre : id; }
@@ -249,7 +249,7 @@ function marcar(clave) { if (q.get('SELECT clave FROM marcas WHERE clave = ?', c
 
 function revisarAlertas() {
   const ahora = new Date();
-  const items = q.all("SELECT * FROM items WHERE estado NOT IN ('cancelada','hecha')").map(filaItem);
+  const items = q.all("SELECT * FROM items WHERE estado NOT IN ('cancelada','hecha','eliminada')").map(filaItem);
   for (const it of items) {
     const ini = new Date(it.inicio); const f = fin(it);
     if (!ES_TAREA(it.tipo) && it.personas.length > 1 && ini > ahora && ini - ahora <= 24 * 3600000) {
@@ -269,7 +269,7 @@ function enviarResumenes() {
     if (h < pf.resumenHora) continue;
     const [hh] = pf.resumenHora.split(':').map(Number); if (Number(h.split(':')[0]) - hh > 3) continue;
     if (!marcar('resumen:' + p.id + ':' + hoy)) continue;
-    const items = q.all("SELECT * FROM items WHERE estado NOT IN ('cancelada')").map(filaItem).filter(it => it.personas.includes(p.id));
+    const items = q.all("SELECT * FROM items WHERE estado NOT IN ('cancelada','eliminada')").map(filaItem).filter(it => it.personas.includes(p.id));
     const citas = items.filter(it => !ES_TAREA(it.tipo) && ymd(it.inicio) === hoy && it.estado !== 'hecha').sort((a, b) => new Date(a.inicio) - new Date(b.inicio));
     const tareas = items.filter(it => ES_TAREA(it.tipo) && it.dueño === p.id && activo(it) && diasEntre(ahora, fin(it)) <= 0);
     const porConf = items.filter(it => !ES_TAREA(it.tipo) && it.dueño !== p.id && it.confirm[p.id] === 'pend' && activo(it) && new Date(it.inicio) > ahora);
